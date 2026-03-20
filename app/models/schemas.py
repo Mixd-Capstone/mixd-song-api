@@ -16,6 +16,7 @@ class SearchResult(BaseModel):
     artist: str
     album: Optional[str] = None
     album_art_url: Optional[str] = None
+    album_art_fallback: Optional[str] = None  # Release-group fallback if primary 404s
     youtube_query: str
     score: int = 0  # MusicBrainz confidence score 0-100
 

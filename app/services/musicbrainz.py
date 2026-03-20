@@ -124,18 +124,22 @@ def _get_artist_image_url(artist_id: str) -> Optional[str]:
     return image_url
 
 
-def _cover_art_url(release_id: Optional[str], release_group_id: Optional[str] = None) -> Optional[str]:
-    """Construct a direct Cover Art Archive front-image URL (no HTTP call).
-    The browser/client follows the redirect to the actual image."""
-    if release_id:
-        return f"{COVER_ART_BASE}/{release_id}/front-250"
-    if release_group_id:
-        return f"{COVER_ART_BASE}-group/{release_group_id}/front-250"
-    return None
+def _cover_art_urls(release_id: Optional[str], release_group_id: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    """Return (primary_url, fallback_url) for Cover Art Archive.
+    Primary = release-specific, Fallback = release-group (higher hit rate).
+    Client tries primary first, falls back on 404."""
+    primary = f"{COVER_ART_BASE}/{release_id}/front-250" if release_id else None
+    fallback = f"https://coverartarchive.org/release-group/{release_group_id}/front-250" if release_group_id else None
+    # If no release, promote fallback to primary
+    if not primary and fallback:
+        return fallback, None
+    return primary, fallback
 
 
-def _get_cover_art_url(release_id: str, release_group_id: Optional[str] = None) -> Optional[str]:
-    """Verified cover art lookup — used during download, not search."""
+def _get_cover_art_url(release_id: str, release_group_id: Optional[str] = None,
+                       title: Optional[str] = None, artist: Optional[str] = None) -> Optional[str]:
+    """Verified cover art lookup — used during download, not search.
+    Tries CAA release -> CAA release-group -> iTunes as fallbacks."""
     for endpoint in filter(None, [
         f"{COVER_ART_BASE}/{release_id}",
         f"{COVER_ART_BASE}-group/{release_group_id}" if release_group_id else None,
@@ -148,6 +152,24 @@ def _get_cover_art_url(release_id: str, release_group_id: Optional[str] = None) 
                         return image.get("image") or image.get("thumbnails", {}).get("large")
         except Exception:
             pass
+
+    # iTunes fallback
+    if title and artist:
+        try:
+            resp = httpx.get(
+                "https://itunes.apple.com/search",
+                params={"term": f"{artist} {title}", "media": "music", "entity": "album", "limit": "1"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                results = resp.json().get("results", [])
+                if results:
+                    art = results[0].get("artworkUrl100", "")
+                    if art:
+                        return art.replace("100x100bb", "600x600bb")
+        except Exception:
+            pass
+
     return None
 
 
@@ -231,11 +253,11 @@ def _parse_recordings(recordings: list, min_score: int = MIN_SCORE) -> list[Sear
         release_id = best.get("id") if best else None
         rg_id = best.get("release-group", {}).get("id") if best else None
 
-        art_url = _cover_art_url(release_id, rg_id)
+        art_url, art_fallback = _cover_art_urls(release_id, rg_id)
 
         sr = SearchResult(
             musicbrainz_id=mbid, title=title, artist=artist,
-            album=album, album_art_url=art_url,
+            album=album, album_art_url=art_url, album_art_fallback=art_fallback,
             youtube_query=f"{title} - {artist}", score=score,
         )
         paired.append((rec, sr))
@@ -349,7 +371,7 @@ def lookup_recording(mbid: str) -> dict:
                     release_id = best.get("id")
                     rg_id = best.get("release-group", {}).get("id")
                     if release_id:
-                        album_art_url = _get_cover_art_url(release_id, rg_id)
+                        album_art_url = _get_cover_art_url(release_id, rg_id, title, artist)
                 break
 
         # If still only compilations, find the best official album release
@@ -366,7 +388,7 @@ def lookup_recording(mbid: str) -> dict:
                     release_id = best.get("id")
                     rg_id = best.get("release-group", {}).get("id")
                     if release_id:
-                        album_art_url = _get_cover_art_url(release_id, rg_id)
+                        album_art_url = _get_cover_art_url(release_id, rg_id, title, artist)
                     break
     except Exception:
         pass
