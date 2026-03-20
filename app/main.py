@@ -32,12 +32,12 @@ app.include_router(songs.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(cache.router, prefix="/api")
 
-# Serve Web UI
+# Serve Web UI (SPA — all non-API routes serve index.html)
 _webui_dir = Path(__file__).resolve().parent.parent / "webui"
-
-@app.get("/")
-async def serve_ui():
-    return FileResponse(_webui_dir / "index.html")
 
 if _webui_dir.is_dir():
     app.mount("/webui", StaticFiles(directory=str(_webui_dir)), name="webui")
+
+@app.get("/{full_path:path}")
+async def serve_ui(full_path: str = ""):
+    return FileResponse(_webui_dir / "index.html")

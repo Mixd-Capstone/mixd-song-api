@@ -25,6 +25,7 @@ class ArtistResult(BaseModel):
     name: str
     type: Optional[str] = None       # Group, Person, etc.
     country: Optional[str] = None
+    image_url: Optional[str] = None  # Artist photo from Wikimedia Commons
     tags: list[str] = []
     top_songs: list[SearchResult] = []
 

@@ -99,6 +99,12 @@ def save_song(
     return _row_to_record(result.data[0])
 
 
+def get_all_downloaded_mbids() -> list[str]:
+    """Return all MusicBrainz IDs that have been downloaded."""
+    result = _sb().table("songs").select("musicbrainz_id").not_.is_("musicbrainz_id", "null").execute()
+    return [r["musicbrainz_id"] for r in result.data if r.get("musicbrainz_id")]
+
+
 def songs_count() -> int:
     result = _sb().table("songs").select("id", count="exact").execute()
     return result.count or 0

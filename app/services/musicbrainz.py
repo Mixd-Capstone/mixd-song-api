@@ -73,6 +73,57 @@ def _cached_mb_artist_search(**kwargs) -> dict:
     return result
 
 
+def _get_artist_image_url(artist_id: str) -> Optional[str]:
+    """Get artist image URL via MusicBrainz url-rels -> Wikimedia Commons."""
+    cache_key = _cache_key("artist_image", artist_id)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached.get("url")
+
+    image_url = None
+    try:
+        result = musicbrainzngs.get_artist_by_id(artist_id, includes=["url-rels"])
+        rels = result.get("artist", {}).get("url-relation-list", [])
+
+        wiki_file = None
+        for rel in rels:
+            if rel.get("type") == "image":
+                target = rel.get("target", "")
+                if "commons.wikimedia.org" in target:
+                    # Extract filename from URL like .../File:Greenday2010.jpg
+                    parts = target.split("File:")
+                    if len(parts) == 2:
+                        wiki_file = "File:" + parts[1]
+                    break
+
+        if wiki_file:
+            # Query Wikimedia Commons API for the actual thumbnail URL
+            resp = httpx.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "titles": wiki_file,
+                    "prop": "imageinfo",
+                    "iiprop": "url",
+                    "iiurlwidth": 300,
+                    "format": "json",
+                },
+                headers={"User-Agent": "MixdSongAPI/1.0"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                pages = resp.json().get("query", {}).get("pages", {})
+                for page in pages.values():
+                    ii = page.get("imageinfo", [{}])[0]
+                    image_url = ii.get("thumburl")
+                    break
+    except Exception:
+        pass
+
+    _cache_put(cache_key, {"url": image_url})
+    return image_url
+
+
 def _cover_art_url(release_id: Optional[str], release_group_id: Optional[str] = None) -> Optional[str]:
     """Construct a direct Cover Art Archive front-image URL (no HTTP call).
     The browser/client follows the redirect to the actual image."""
@@ -344,6 +395,40 @@ def lookup_recording(mbid: str) -> dict:
     }
 
 
+def _get_artist_top_songs(artist_id: str, top_n: int = 5) -> list[SearchResult]:
+    """Fetch top songs for an artist, ranked by release count (popularity proxy)."""
+    try:
+        # Fetch multiple pages for better coverage
+        all_recs = []
+        for offset in [0, 100]:
+            recs_result = _cached_mb_search(
+                query=f'arid:{artist_id}',
+                limit=100,
+                offset=offset,
+            )
+            all_recs.extend(recs_result.get("recording-list", []))
+            if len(recs_result.get("recording-list", [])) < 100:
+                break
+
+        # Deduplicate by lowercase title, keep highest release count
+        seen: dict[str, tuple[dict, int]] = {}
+        for rec in all_recs:
+            title = rec.get("title", "").strip()
+            title_lower = title.lower()
+            if _DERIVATIVE_RE.search(title):
+                continue
+            if re.search(r'\((demo|live|acoustic|remix|edit|version)\)', title, re.IGNORECASE):
+                continue
+            count = len(rec.get("release-list", []))
+            if title_lower not in seen or count > seen[title_lower][1]:
+                seen[title_lower] = (rec, count)
+
+        top = sorted(seen.values(), key=lambda x: -x[1])[:top_n]
+        return _parse_recordings([r for r, _ in top], min_score=0)
+    except Exception:
+        return []
+
+
 def _search_artist(query: str, top_n: int = 5) -> list[ArtistResult]:
     """Search for artists matching the query. For strong matches, fetch their top songs."""
     try:
@@ -362,36 +447,13 @@ def _search_artist(query: str, top_n: int = 5) -> list[ArtistResult]:
         if not artist_id or not name:
             continue
 
-        # Fetch top songs by this artist (sorted by release count = popularity)
-        top_songs: list[SearchResult] = []
-        try:
-            recs_result = _cached_mb_search(
-                query=f'arid:{artist_id}',
-                limit=50,
-            )
-            recs = recs_result.get("recording-list", [])
+        # Fetch image and top songs in parallel
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            img_future = pool.submit(_get_artist_image_url, artist_id)
+            songs_future = pool.submit(_get_artist_top_songs, artist_id, top_n)
 
-            # Deduplicate by lowercase title, keep highest release count
-            seen: dict[str, tuple[dict, int]] = {}
-            for rec in recs:
-                title = rec.get("title", "").strip()
-                title_lower = title.lower()
-                # Skip derivatives
-                if _DERIVATIVE_RE.search(title):
-                    continue
-                # Skip titles with parenthetical suffixes like "(demo)", "(live)"
-                if re.search(r'\((demo|live|acoustic|remix|edit|version)\)', title, re.IGNORECASE):
-                    continue
-                count = len(rec.get("release-list", []))
-                if title_lower not in seen or count > seen[title_lower][1]:
-                    seen[title_lower] = (rec, count)
-
-            # Sort by release count and take top N
-            top = sorted(seen.values(), key=lambda x: -x[1])[:top_n]
-            top_songs = _parse_recordings([r for r, _ in top], min_score=0)
-        except Exception:
-            pass
-
+        image_url = img_future.result()
+        top_songs = songs_future.result()
         tags = [t.get("name", "") for t in a.get("tag-list", [])[:8] if t.get("name")]
 
         artists.append(ArtistResult(
@@ -399,11 +461,43 @@ def _search_artist(query: str, top_n: int = 5) -> list[ArtistResult]:
             name=name,
             type=a.get("type"),
             country=a.get("country"),
+            image_url=image_url,
             tags=tags,
             top_songs=top_songs,
         ))
 
     return artists
+
+
+def get_artist_detail(artist_id: str, songs_limit: int = 50) -> Optional[ArtistResult]:
+    """Get full artist details with all songs for the artist page."""
+    try:
+        result = musicbrainzngs.get_artist_by_id(artist_id, includes=["tags"])
+    except Exception:
+        return None
+
+    a = result.get("artist", {})
+    name = a.get("name", "")
+    if not name:
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        img_future = pool.submit(_get_artist_image_url, artist_id)
+        songs_future = pool.submit(_get_artist_top_songs, artist_id, songs_limit)
+
+    image_url = img_future.result()
+    top_songs = songs_future.result()
+    tags = [t.get("name", "") for t in a.get("tag-list", [])[:8] if t.get("name")]
+
+    return ArtistResult(
+        musicbrainz_id=artist_id,
+        name=name,
+        type=a.get("type"),
+        country=a.get("country"),
+        image_url=image_url,
+        tags=tags,
+        top_songs=top_songs,
+    )
 
 
 def _search_recordings_only(

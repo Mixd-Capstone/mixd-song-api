@@ -39,6 +39,7 @@
     header {
       text-align: center;
       margin-bottom: 2.5rem;
+      cursor: pointer;
     }
 
     header h1 {
@@ -305,19 +306,9 @@
     .btn:active { transform: scale(0.97); }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    .btn-download {
-      background: var(--accent);
-    }
-
-    .btn-download.downloading {
-      background: var(--surface-2);
-      color: var(--text-dim);
-    }
-
-    .btn-play {
-      background: var(--green);
-      color: #000;
-    }
+    .btn-download { background: var(--accent); }
+    .btn-download.downloading { background: var(--surface-2); color: var(--text-dim); }
+    .btn-play { background: var(--green); color: #000; }
 
     /* Player */
     .player-bar {
@@ -412,7 +403,7 @@
       flex-shrink: 0;
     }
 
-    /* Modal / Download Status */
+    /* Toast */
     .toast-container {
       position: fixed;
       top: 1.5rem;
@@ -441,7 +432,7 @@
       to { opacity: 1; transform: translateX(0); }
     }
 
-    /* Artist cards */
+    /* Artist cards (search results) */
     .artist-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -471,6 +462,13 @@
       font-weight: 700;
       color: #fff;
       flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .artist-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     .artist-info { flex: 1; min-width: 0; }
@@ -534,6 +532,67 @@
       flex-shrink: 0;
     }
 
+    /* Artist page */
+    .artist-page-header {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .artist-page-avatar {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), #c084fc);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: #fff;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .artist-page-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .artist-page-info h2 {
+      font-size: 2rem;
+      font-weight: 800;
+    }
+
+    .artist-page-info .artist-meta {
+      font-size: 0.9rem;
+      margin-top: 0.25rem;
+    }
+
+    .artist-page-info .artist-tags {
+      margin-top: 0.5rem;
+    }
+
+    .artist-page-info .artist-tag {
+      font-size: 0.8rem;
+      padding: 0.25rem 0.6rem;
+    }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--accent);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 1rem;
+      text-decoration: none;
+    }
+
+    .back-link:hover { text-decoration: underline; }
+
     /* Responsive */
     @media (max-width: 600px) {
       .container { padding: 1.25rem 1rem; }
@@ -543,12 +602,15 @@
       .config-bar { flex-direction: column; }
       .config-bar input { width: 100%; }
       .player-info { max-width: 120px; }
+      .artist-page-header { flex-direction: column; text-align: center; }
+      .artist-page-avatar { width: 80px; height: 80px; font-size: 1.8rem; }
+      .artist-page-info h2 { font-size: 1.5rem; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <header>
+    <header onclick="navigateTo('/')">
       <h1>Mixd</h1>
       <p>Search, preview & download songs</p>
     </header>
@@ -578,8 +640,8 @@
   <div class="player-bar" id="playerBar">
     <div class="player-art" id="playerArt"></div>
     <div class="player-info">
-      <div class="title" id="playerTitle">—</div>
-      <div class="artist" id="playerArtist">—</div>
+      <div class="title" id="playerTitle">&mdash;</div>
+      <div class="artist" id="playerArtist">&mdash;</div>
     </div>
     <div class="player-controls">
       <button id="playPauseBtn" onclick="togglePlayPause()">&#9654;</button>
@@ -596,18 +658,18 @@
   <audio id="audioEl"></audio>
 
   <script>
-    // State
+    // === State ===
     let searchResults = [];
     let searchArtists = [];
     let displayedResults = [];
-    let downloadedSongs = {};  // mbid -> SongRecord
+    let downloadedMbids = new Set();  // Set of already-downloaded MBIDs
+    let downloadedSongs = {};         // mbid -> SongRecord (for playback)
     const audio = document.getElementById('audioEl');
 
-    // --- Local search cache ---
-    // Maps normalized query -> { results, artists, timestamp }
+    // Local search cache: query -> { results, artists, timestamp }
     const searchCache = new Map();
-    const CACHE_TTL = 60 * 60 * 1000; // 1 hour
-    let lastApiQuery = '';  // the query that produced the current cached results
+    const CACHE_TTL = 60 * 60 * 1000;
+    let lastApiQuery = '';
 
     // Elements
     const apiUrlEl = document.getElementById('apiUrl');
@@ -625,7 +687,7 @@
     apiUrlEl.addEventListener('change', () => localStorage.setItem('mixd_url', apiUrlEl.value));
     apiKeyEl.addEventListener('change', () => localStorage.setItem('mixd_key', apiKeyEl.value));
 
-    // API helpers
+    // === API helpers ===
     function baseUrl() { return (apiUrlEl.value || window.location.origin).replace(/\/+$/, ''); }
     function headers() { return { 'Content-Type': 'application/json', 'X-API-Key': apiKeyEl.value }; }
 
@@ -640,7 +702,26 @@
       return res.json();
     }
 
-    // Health check
+    async function apiGet(path) {
+      const res = await fetch(baseUrl() + path, { headers: headers() });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `${res.status} ${res.statusText}`);
+      }
+      return res.json();
+    }
+
+    // === Load downloaded songs on startup ===
+    async function loadDownloadedSongs() {
+      try {
+        const mbids = await apiGet('/api/songs/downloaded');
+        downloadedMbids = new Set(mbids);
+      } catch (e) {
+        // Silently fail — search still works, just won't show "Play" buttons
+      }
+    }
+
+    // === Health check ===
     async function checkHealth() {
       try {
         const data = await fetch(baseUrl() + '/api/health').then(r => r.json());
@@ -653,22 +734,52 @@
     }
 
     healthDot.addEventListener('click', checkHealth);
-    checkHealth();
 
-    // --- Search logic ---
+    // === URL Routing ===
+    function navigateTo(path) {
+      history.pushState(null, '', path);
+      handleRoute();
+    }
+
+    window.addEventListener('popstate', handleRoute);
+
+    function handleRoute() {
+      const params = new URLSearchParams(window.location.search);
+      const path = window.location.pathname;
+
+      if (path.startsWith('/artist/')) {
+        const artistId = path.split('/artist/')[1];
+        if (artistId) {
+          loadArtistPage(artistId);
+          return;
+        }
+      }
+
+      if (params.has('q')) {
+        const q = params.get('q');
+        searchEl.value = q;
+        doSearch(false);
+      } else {
+        contentEl.innerHTML = '<div class="status">Type a song name or "Artist - Title" to get started</div>';
+      }
+    }
+
+    // === Search logic ===
     let searchTimeout = null;
-    let activeAbort = null;  // AbortController for in-flight request
+    let activeAbort = null;
 
-    // Enter = full search (non-fast, most precise)
     searchEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         clearTimeout(searchTimeout);
+        const q = searchEl.value.trim();
+        if (q) {
+          history.replaceState(null, '', '/?q=' + encodeURIComponent(q));
+        }
         doSearch(false);
       }
     });
 
-    // Typing = try local cache filter first, then debounced fast API search
     searchEl.addEventListener('input', () => {
       clearTimeout(searchTimeout);
       const q = searchEl.value.trim();
@@ -677,7 +788,6 @@
         return;
       }
 
-      // 1. Check if we have an exact cache hit
       const cacheKey = q.toLowerCase();
       const cached = searchCache.get(cacheKey);
       if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
@@ -688,7 +798,6 @@
         return;
       }
 
-      // 2. Try filtering current results locally (instant)
       if (searchResults.length > 0) {
         const lower = q.toLowerCase();
         const filtered = searchResults.filter(r =>
@@ -702,7 +811,6 @@
         }
       }
 
-      // 3. Debounced API call (fast mode) for fresh results
       searchTimeout = setTimeout(() => doSearch(true), 500);
     });
 
@@ -712,8 +820,6 @@
       if (!apiKeyEl.value) { toast('Enter your API key first', 'error'); return; }
 
       const cacheKey = query.toLowerCase();
-
-      // Check local cache
       const cached = searchCache.get(cacheKey);
       if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
         searchResults = cached.results;
@@ -723,7 +829,6 @@
         return;
       }
 
-      // Cancel any in-flight request
       if (activeAbort) activeAbort.abort();
       activeAbort = new AbortController();
 
@@ -744,12 +849,10 @@
         searchArtists = data.artists || [];
         displayedResults = searchResults;
 
-        // Cache the results
         searchCache.set(cacheKey, { results: searchResults, artists: searchArtists, timestamp: Date.now() });
-
         renderResults();
       } catch (e) {
-        if (e.name === 'AbortError') return;  // superseded by newer search
+        if (e.name === 'AbortError') return;
         showError(e.message);
       }
     }
@@ -762,10 +865,24 @@
       contentEl.innerHTML = `<div class="status error">${escHtml(msg)}</div>`;
     }
 
+    // === Check if a song is downloaded ===
+    function isDownloaded(mbid) {
+      return downloadedMbids.has(mbid) || !!downloadedSongs[mbid];
+    }
+
+    // === Render artist avatar (image or initials) ===
+    function renderAvatar(artist, size) {
+      if (artist.image_url) {
+        return `<img src="${escAttr(artist.image_url)}" alt="${escAttr(artist.name)}" loading="lazy" onerror="this.parentElement.innerHTML='${artist.name.split(/\\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)}'">`;
+      }
+      return artist.name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    }
+
+    // === Render search results ===
     function renderResults(isFiltered = false) {
       if (displayedResults.length === 0 && searchArtists.length === 0) {
         const hint = isFiltered
-          ? 'No matches in cached results — press Enter to search the full database'
+          ? 'No matches in cached results \u2014 press Enter to search the full database'
           : 'No results found';
         contentEl.innerHTML = `<div class="status">${hint}</div>`;
         return;
@@ -776,12 +893,11 @@
       // Artist cards
       if (!isFiltered && searchArtists.length > 0) {
         searchArtists.forEach(artist => {
-          const initials = artist.name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
           const metaParts = [artist.type, artist.country].filter(Boolean);
 
           html += `<div class="artist-card">
-            <div class="artist-header" onclick="filterByArtist('${escAttr(artist.name)}')">
-              <div class="artist-avatar">${escHtml(initials)}</div>
+            <div class="artist-header" onclick="navigateTo('/artist/${escAttr(artist.musicbrainz_id)}')">
+              <div class="artist-avatar">${renderAvatar(artist)}</div>
               <div class="artist-info">
                 <div class="artist-name">${escHtml(artist.name)}</div>
                 ${metaParts.length ? `<div class="artist-meta">${escHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
@@ -796,10 +912,10 @@
               const artImg = r.album_art_url
                 ? `<img src="${escAttr(r.album_art_url)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='&#9835;'">`
                 : '&#9835;';
-              const downloaded = downloadedSongs[r.musicbrainz_id];
-              const btn = downloaded
-                ? `<button class="btn btn-play" onclick="playSong('${escAttr(r.musicbrainz_id)}')">&#9654;</button>`
-                : `<button class="btn btn-download" id="adl-${escAttr(artist.musicbrainz_id)}-${i}" onclick="downloadSong('${escAttr(r.musicbrainz_id)}', 0, 'adl-${escAttr(artist.musicbrainz_id)}-${i}')">&#8595;</button>`;
+              const btnId = `adl-${escAttr(artist.musicbrainz_id)}-${i}`;
+              const btn = isDownloaded(r.musicbrainz_id)
+                ? `<button class="btn btn-play" onclick="event.stopPropagation(); fetchAndPlay('${escAttr(r.musicbrainz_id)}')">&#9654;</button>`
+                : `<button class="btn btn-download" id="${btnId}" onclick="event.stopPropagation(); downloadSong('${escAttr(r.musicbrainz_id)}', '${btnId}')">&#8595;</button>`;
 
               html += `<div class="result-card">
                 <div class="result-art">${artImg}</div>
@@ -828,13 +944,13 @@
             : '&#9835;';
 
           const scoreCls = r.score >= 90 ? 'high' : r.score >= 70 ? 'mid' : '';
-          const downloaded = downloadedSongs[r.musicbrainz_id];
+          const btnId = `dl-${i}`;
 
           let actionBtn;
-          if (downloaded) {
-            actionBtn = `<button class="btn btn-play" onclick="playSong('${escAttr(r.musicbrainz_id)}')">&#9654; Play</button>`;
+          if (isDownloaded(r.musicbrainz_id)) {
+            actionBtn = `<button class="btn btn-play" onclick="fetchAndPlay('${escAttr(r.musicbrainz_id)}')">&#9654; Play</button>`;
           } else {
-            actionBtn = `<button class="btn btn-download" id="dl-${i}" onclick="downloadSong('${escAttr(r.musicbrainz_id)}', ${i}, 'dl-${i}')">&#8595; Download</button>`;
+            actionBtn = `<button class="btn btn-download" id="${btnId}" onclick="downloadSong('${escAttr(r.musicbrainz_id)}', '${btnId}')">&#8595; Download</button>`;
           }
 
           html += `
@@ -856,15 +972,68 @@
       contentEl.innerHTML = html;
     }
 
-    function filterByArtist(artistName) {
-      searchEl.value = artistName;
-      searchArtists = [];  // clear artists so we get pure song results
-      doSearch(false);  // full search by artist name
+    // === Artist page ===
+    async function loadArtistPage(artistId) {
+      showLoading('Loading artist...');
+      searchEl.value = '';
+
+      try {
+        const artist = await apiGet(`/api/artist/${artistId}`);
+        renderArtistPage(artist);
+      } catch (e) {
+        showError(`Failed to load artist: ${e.message}`);
+      }
     }
 
-    // Download
-    async function downloadSong(mbid, idx, btnId) {
-      const btn = document.getElementById(btnId || `dl-${idx}`);
+    function renderArtistPage(artist) {
+      const metaParts = [artist.type, artist.country].filter(Boolean);
+
+      let html = `<a class="back-link" onclick="history.back()">\u2190 Back to search</a>`;
+
+      html += `<div class="artist-page-header">
+        <div class="artist-page-avatar">${renderAvatar(artist)}</div>
+        <div class="artist-page-info">
+          <h2>${escHtml(artist.name)}</h2>
+          ${metaParts.length ? `<div class="artist-meta">${escHtml(metaParts.join(' \u00b7 '))}</div>` : ''}
+          ${artist.tags.length ? `<div class="artist-tags">${artist.tags.map(t => `<span class="artist-tag">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        </div>
+      </div>`;
+
+      html += `<div class="results-header"><h2>Songs</h2><span>${artist.top_songs.length} songs</span></div>`;
+
+      artist.top_songs.forEach((r, i) => {
+        const artHtml = r.album_art_url
+          ? `<img src="${escAttr(r.album_art_url)}" alt="cover" loading="lazy" onerror="this.parentElement.innerHTML='&#9835;'">`
+          : '&#9835;';
+
+        const btnId = `ap-${i}`;
+        let actionBtn;
+        if (isDownloaded(r.musicbrainz_id)) {
+          actionBtn = `<button class="btn btn-play" onclick="fetchAndPlay('${escAttr(r.musicbrainz_id)}')">&#9654; Play</button>`;
+        } else {
+          actionBtn = `<button class="btn btn-download" id="${btnId}" onclick="downloadSong('${escAttr(r.musicbrainz_id)}', '${btnId}')">&#8595; Download</button>`;
+        }
+
+        html += `
+          <div class="result-card">
+            <div class="result-art">${artHtml}</div>
+            <div class="result-info">
+              <div class="result-title">${escHtml(r.title)}</div>
+              <div class="result-artist">${escHtml(r.artist)}</div>
+              ${r.album ? `<div class="result-album">${escHtml(r.album)}</div>` : ''}
+            </div>
+            <div class="result-meta">
+              ${actionBtn}
+            </div>
+          </div>`;
+      });
+
+      contentEl.innerHTML = html;
+    }
+
+    // === Download ===
+    async function downloadSong(mbid, btnId) {
+      const btn = document.getElementById(btnId);
       if (btn) {
         btn.disabled = true;
         btn.classList.add('downloading');
@@ -874,8 +1043,16 @@
       try {
         const song = await apiPost('/api/download', { musicbrainz_id: mbid });
         downloadedSongs[mbid] = song;
+        downloadedMbids.add(mbid);
         toast(`Downloaded "${song.title}" by ${song.artist}`, 'success');
-        renderResults();
+
+        // Re-render current view
+        if (window.location.pathname.startsWith('/artist/')) {
+          loadArtistPage(window.location.pathname.split('/artist/')[1]);
+        } else {
+          renderResults();
+        }
+
         playSong(mbid);
       } catch (e) {
         toast(`Download failed: ${e.message}`, 'error');
@@ -887,12 +1064,26 @@
       }
     }
 
-    // Player
+    // === Player ===
+    async function fetchAndPlay(mbid) {
+      if (downloadedSongs[mbid]) {
+        playSong(mbid);
+        return;
+      }
+      // Fetch song record from API
+      try {
+        const song = await apiGet(`/api/songs/${mbid}`);
+        downloadedSongs[mbid] = song;
+        playSong(mbid);
+      } catch (e) {
+        toast(`Failed to load song: ${e.message}`, 'error');
+      }
+    }
+
     function playSong(mbid) {
       const song = downloadedSongs[mbid];
       if (!song || !song.file_path) { toast('No audio URL available', 'error'); return; }
 
-      // Handle relative /api/cache URLs and absolute Supabase URLs
       const src = song.file_path.startsWith('/') ? baseUrl() + song.file_path + '?key=' + encodeURIComponent(apiKeyEl.value) : song.file_path;
       audio.src = src;
       audio.play();
@@ -945,7 +1136,7 @@
       return `${m}:${sec.toString().padStart(2, '0')}`;
     }
 
-    // Toasts
+    // === Toasts ===
     function toast(msg, type = '') {
       const el = document.createElement('div');
       el.className = `toast ${type}`;
@@ -954,7 +1145,7 @@
       setTimeout(() => el.remove(), 4000);
     }
 
-    // Utils
+    // === Utils ===
     function escHtml(s) {
       const d = document.createElement('div');
       d.textContent = s;
@@ -964,6 +1155,15 @@
     function escAttr(s) {
       return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
     }
+
+    // === Init ===
+    async function init() {
+      checkHealth();
+      await loadDownloadedSongs();
+      handleRoute();
+    }
+
+    init();
   </script>
 </body>
 </html>

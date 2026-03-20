@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import validate_api_key
-from app.models.schemas import SearchRequest, SearchResponse
-from app.services.musicbrainz import search_recordings
+from app.models.schemas import ArtistResult, SearchRequest, SearchResponse
+from app.services.musicbrainz import search_recordings, get_artist_detail
 
 router = APIRouter(tags=["search"])
 
@@ -23,3 +23,16 @@ def search(
         fast=fast,
     )
     return SearchResponse(results=results, artists=artists)
+
+
+@router.get("/artist/{artist_id}", response_model=ArtistResult)
+def artist_detail(
+    artist_id: str,
+    limit: int = Query(50, ge=1, le=100, description="Max songs to return"),
+    _key: str = Depends(validate_api_key),
+):
+    """Get full artist details with all their songs."""
+    artist = get_artist_detail(artist_id, songs_limit=limit)
+    if not artist:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artist not found")
+    return artist
