@@ -14,32 +14,40 @@ router = APIRouter(tags=["stems"])
 
 @router.get("/stems")
 async def list_all_stems(_key: str = Depends(validate_api_key)):
-    """List all songs that have stems available, with their stem URLs."""
-    mbids = storage.get_all_downloaded_mbids()
-    results = []
+    """List all songs that have stems available, queried directly from Supabase."""
+    from app.services.storage import _sb
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-        for mbid in mbids:
-            try:
-                resp = await client.get(
-                    f"{STEM_API_URL}/stems/{mbid}",
-                    headers={"X-API-Key": STEM_API_KEY},
-                )
-                if resp.status_code == 200:
-                    song = storage.get_song_by_mbid(mbid)
-                    stem_data = resp.json()
-                    results.append({
-                        "musicbrainz_id": mbid,
-                        "title": song.title if song else mbid,
-                        "artist": song.artist if song else "",
-                        "album": song.album if song else "",
-                        "album_art_url": song.album_art_url if song else None,
-                        "stems": stem_data.get("stems", {}),
-                    })
-            except (httpx.ConnectError, httpx.TimeoutException):
-                break  # stem API is down, no point continuing
+    # Get all stem records
+    result = _sb().table("stems").select("musicbrainz_id, stem_name, file_key").execute()
+    if not result.data:
+        return {"songs": []}
 
-    return {"songs": results}
+    # Group stems by musicbrainz_id
+    grouped: dict[str, dict[str, str]] = {}
+    for row in result.data:
+        mbid = row["musicbrainz_id"]
+        if mbid not in grouped:
+            grouped[mbid] = {}
+        # Generate a signed URL for each stem
+        signed = _sb().storage.from_("stem-files").create_signed_url(
+            f"{row['file_key']}.mp3", 3600
+        )
+        grouped[mbid][row["stem_name"]] = signed["signedURL"]
+
+    # Build response with song metadata
+    songs = []
+    for mbid, stems in grouped.items():
+        song = storage.get_song_by_mbid(mbid)
+        songs.append({
+            "musicbrainz_id": mbid,
+            "title": song.title if song else mbid,
+            "artist": song.artist if song else "",
+            "album": song.album if song else "",
+            "album_art_url": song.album_art_url if song else None,
+            "stems": stems,
+        })
+
+    return {"songs": songs}
 
 
 @router.post("/stems/{musicbrainz_id}")
@@ -117,28 +125,26 @@ async def get_stems(
     _key: str = Depends(validate_api_key),
 ):
     """Get available stems for a song with signed playback URLs."""
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
-            resp = await client.get(
-                f"{STEM_API_URL}/stems/{musicbrainz_id}",
-                headers={"X-API-Key": STEM_API_KEY},
-            )
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Stem API is unreachable",
-        )
+    from app.services.storage import _sb
 
-    if resp.status_code == 404:
+    result = (
+        _sb().table("stems")
+        .select("stem_name, file_key")
+        .eq("musicbrainz_id", musicbrainz_id)
+        .execute()
+    )
+
+    if not result.data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No stems found for this song",
         )
 
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Stem API error: {resp.text}",
+    stems = {}
+    for row in result.data:
+        signed = _sb().storage.from_("stem-files").create_signed_url(
+            f"{row['file_key']}.mp3", 3600
         )
+        stems[row["stem_name"]] = signed["signedURL"]
 
-    return resp.json()
+    return {"stems": stems}

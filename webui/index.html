@@ -762,26 +762,29 @@
     .nav-tab:hover { background: var(--surface-2); color: var(--text); }
     .nav-tab.active { background: var(--surface-2); color: var(--text); }
 
-    /* Stems library grid */
-    .stems-library-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 1rem;
+    /* Stems library list */
+    .stems-library-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
     }
-    .stems-library-card {
+    .stems-song-section {
       background: var(--surface);
       border-radius: 10px;
-      padding: 1rem;
       border: 1px solid var(--border);
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
-      display: flex;
-      gap: 1rem;
-      align-items: center;
+      overflow: hidden;
     }
-    .stems-library-card:hover { background: var(--surface-hover); border-color: var(--accent-glow); }
-    .stems-library-card-art {
-      width: 64px; height: 64px;
+    .stems-song-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .stems-song-header:hover { background: var(--surface-hover); }
+    .stems-song-art {
+      width: 48px; height: 48px;
       border-radius: 6px;
       background: var(--surface-2);
       overflow: hidden;
@@ -790,44 +793,89 @@
       align-items: center;
       justify-content: center;
       color: var(--text-faint);
-      font-size: 1.5rem;
+      font-size: 1.2rem;
     }
-    .stems-library-card-art img { width: 100%; height: 100%; object-fit: cover; }
-    .stems-library-card-info { flex: 1; min-width: 0; }
-    .stems-library-card-title {
+    .stems-song-art img { width: 100%; height: 100%; object-fit: cover; }
+    .stems-song-info { flex: 1; min-width: 0; }
+    .stems-song-title {
       font-weight: 600;
       font-size: 0.95rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .stems-library-card-artist {
+    .stems-song-artist {
       color: var(--text-dim);
       font-size: 0.85rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
-    .stems-library-card-tags {
+    .stems-song-chevron {
+      color: var(--text-faint);
+      flex-shrink: 0;
+      transition: transform 0.2s;
+      font-size: 0.8rem;
+    }
+    .stems-song-section.open .stems-song-chevron { transform: rotate(90deg); }
+    .stems-song-body {
+      display: none;
+      border-top: 1px solid var(--border);
+      padding: 0.25rem 0;
+    }
+    .stems-song-section.open .stems-song-body { display: block; }
+    .stems-stem-row {
       display: flex;
-      gap: 0.35rem;
-      flex-wrap: wrap;
-      margin-top: 0.4rem;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.5rem 1rem 0.5rem 1.5rem;
+      transition: background 0.15s;
     }
-    .stem-tag {
-      font-size: 0.65rem;
+    .stems-stem-row:hover { background: var(--surface-hover); }
+    .stems-stem-icon {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    .stems-stem-icon.vocals { background: #7c5cfc33; color: #7c5cfc; }
+    .stems-stem-icon.instrumental { background: #1ed76033; color: #1ed760; }
+    .stems-stem-icon.drums { background: #f8717133; color: #f87171; }
+    .stems-stem-icon.bass { background: #fb923c33; color: #fb923c; }
+    .stems-stem-icon.guitar { background: #38bdf833; color: #38bdf8; }
+    .stems-stem-icon.piano { background: #e879f933; color: #e879f9; }
+    .stems-stem-icon.other { background: #94a3b833; color: #94a3b8; }
+    .stems-stem-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+      text-transform: capitalize;
+      flex: 1;
+    }
+    .stems-stem-play {
+      padding: 0.25rem 0.65rem;
+      border: none;
+      border-radius: 500px;
+      font-size: 0.75rem;
       font-weight: 600;
-      padding: 0.15rem 0.45rem;
-      border-radius: 4px;
-      text-transform: uppercase;
+      cursor: pointer;
+      background: var(--surface-2);
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s;
     }
-    .stem-tag.vocals { background: #7c5cfc33; color: #7c5cfc; }
-    .stem-tag.instrumental { background: #1ed76033; color: #1ed760; }
-    .stem-tag.drums { background: #f8717133; color: #f87171; }
-    .stem-tag.bass { background: #fb923c33; color: #fb923c; }
-    .stem-tag.guitar { background: #38bdf833; color: #38bdf8; }
-    .stem-tag.piano { background: #e879f933; color: #e879f9; }
-    .stem-tag.other { background: #94a3b833; color: #94a3b8; }
+    .stems-stem-play:hover { background: var(--accent); color: #fff; }
+    .stems-open-mixer {
+      padding: 0.35rem 0.85rem;
+      border: 1px solid var(--border);
+      border-radius: 500px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: none;
+      color: var(--text-dim);
+      transition: border-color 0.2s, color 0.2s;
+      margin: 0.25rem 1rem 0.5rem 1.5rem;
+    }
+    .stems-open-mixer:hover { border-color: var(--accent); color: var(--text); }
   </style>
 </head>
 <body>
@@ -1540,29 +1588,68 @@
         return;
       }
 
-      html += '<div class="stems-library-grid">';
+      // Deduplicate by title+artist, merge stems from duplicates
+      const deduped = new Map();
       songs.forEach(s => {
+        const key = `${(s.title || '').toLowerCase().trim()}|${(s.artist || '').toLowerCase().trim()}`;
+        if (!key || key === '|') return; // skip entries with no title/artist
+        if (deduped.has(key)) {
+          // Merge stems into existing entry
+          const existing = deduped.get(key);
+          Object.assign(existing.stems, s.stems || {});
+        } else {
+          deduped.set(key, { ...s, stems: { ...(s.stems || {}) } });
+        }
+      });
+
+      html += '<div class="stems-library-list">';
+      let idx = 0;
+      deduped.forEach(s => {
+        const sIdx = idx++;
         const stemNames = Object.keys(s.stems || {});
         const artHtml = s.album_art_url
           ? `<img src="${escAttr(s.album_art_url)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='&#9835;'">`
           : '&#9835;';
-        const tags = stemNames.map(name => {
-          const cls = STEM_ICONS[name] ? name : 'other';
-          return `<span class="stem-tag ${escAttr(cls)}">${escHtml(name)}</span>`;
-        }).join('');
 
-        html += `<div class="stems-library-card" onclick="navigateTo('/stems/${escAttr(s.musicbrainz_id)}')">
-          <div class="stems-library-card-art">${artHtml}</div>
-          <div class="stems-library-card-info">
-            <div class="stems-library-card-title">${escHtml(s.title)}</div>
-            <div class="stems-library-card-artist">${escHtml(s.artist)}</div>
-            <div class="stems-library-card-tags">${tags}</div>
+        html += `<div class="stems-song-section" id="stems-section-${sIdx}">`;
+        html += `<div class="stems-song-header" onclick="document.getElementById('stems-section-${sIdx}').classList.toggle('open')">
+          <div class="stems-song-art">${artHtml}</div>
+          <div class="stems-song-info">
+            <div class="stems-song-title">${escHtml(s.title)}</div>
+            <div class="stems-song-artist">${escHtml(s.artist)}</div>
           </div>
+          <span style="color:var(--text-faint);font-size:0.8rem">${stemNames.length} stems</span>
+          <span class="stems-song-chevron">&#9654;</span>
         </div>`;
+        html += '<div class="stems-song-body">';
+
+        stemNames.forEach(name => {
+          const iconClass = STEM_ICONS[name] ? name : 'other';
+          const icon = STEM_ICONS[name] || '🎵';
+          const url = s.stems[name];
+          html += `<div class="stems-stem-row">
+            <div class="stems-stem-icon ${escAttr(iconClass)}">${icon}</div>
+            <span class="stems-stem-name">${escHtml(name)}</span>
+            <button class="stems-stem-play" onclick="playLibraryStem('${escAttr(url)}', '${escAttr(s.title)} - ${escAttr(name)}')">&#9654; Play</button>
+          </div>`;
+        });
+
+        html += `<button class="stems-open-mixer" onclick="navigateTo('/stems/${escAttr(s.musicbrainz_id)}')">Open Mixer</button>`;
+        html += '</div></div>';
       });
       html += '</div>';
 
       contentEl.innerHTML = html;
+    }
+
+    function playLibraryStem(url, label) {
+      audio.src = url;
+      audio.play();
+      document.getElementById('playerTitle').textContent = label;
+      document.getElementById('playerArtist').textContent = 'Stem';
+      document.getElementById('playerArt').innerHTML = '';
+      playerBar.classList.add('visible');
+      document.getElementById('playPauseBtn').innerHTML = '&#9646;&#9646;';
     }
 
     async function triggerSeparation(mbid) {
