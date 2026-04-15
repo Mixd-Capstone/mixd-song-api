@@ -1,0 +1,144 @@
+import logging
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.auth import validate_api_key
+from app.config import STEM_API_URL, STEM_API_KEY
+from app.services import storage
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["stems"])
+
+
+@router.get("/stems")
+async def list_all_stems(_key: str = Depends(validate_api_key)):
+    """List all songs that have stems available, with their stem URLs."""
+    mbids = storage.get_all_downloaded_mbids()
+    results = []
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        for mbid in mbids:
+            try:
+                resp = await client.get(
+                    f"{STEM_API_URL}/stems/{mbid}",
+                    headers={"X-API-Key": STEM_API_KEY},
+                )
+                if resp.status_code == 200:
+                    song = storage.get_song_by_mbid(mbid)
+                    stem_data = resp.json()
+                    results.append({
+                        "musicbrainz_id": mbid,
+                        "title": song.title if song else mbid,
+                        "artist": song.artist if song else "",
+                        "album": song.album if song else "",
+                        "album_art_url": song.album_art_url if song else None,
+                        "stems": stem_data.get("stems", {}),
+                    })
+            except (httpx.ConnectError, httpx.TimeoutException):
+                break  # stem API is down, no point continuing
+
+    return {"songs": results}
+
+
+@router.post("/stems/{musicbrainz_id}")
+async def separate_stems(
+    musicbrainz_id: str,
+    mode: str = "vocals",
+    _key: str = Depends(validate_api_key),
+):
+    """Trigger stem separation for a downloaded song.
+
+    Proxies to the internal stem API, which runs Demucs and uploads
+    results to Supabase.
+
+    Modes:
+        "vocals" — vocals + instrumental (default)
+        "full"   — full 6-stem separation
+    """
+    if mode not in ("vocals", "full"):
+        raise HTTPException(status_code=400, detail="mode must be 'vocals' or 'full'")
+
+    # Look up the song to get its file path
+    song = storage.get_song_by_mbid(musicbrainz_id)
+    if not song:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Song not found: {musicbrainz_id}",
+        )
+
+    # Get the local file path from the song cache
+    from app.services.song_cache import get_path
+    local_path = get_path(musicbrainz_id)
+    if not local_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Song file not found in local cache. Download it first.",
+        )
+
+    # Proxy to stem API
+    logger.info("Requesting stem separation for %s (mode=%s)", musicbrainz_id, mode)
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+            resp = await client.post(
+                f"{STEM_API_URL}/separate",
+                headers={"X-API-Key": STEM_API_KEY},
+                data={
+                    "file_path": str(local_path),
+                    "musicbrainz_id": musicbrainz_id,
+                    "mode": mode,
+                },
+            )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Stem API is unreachable",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Stem separation timed out",
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stem API error: {resp.text}",
+        )
+
+    return resp.json()
+
+
+@router.get("/stems/{musicbrainz_id}")
+async def get_stems(
+    musicbrainz_id: str,
+    _key: str = Depends(validate_api_key),
+):
+    """Get available stems for a song with signed playback URLs."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+            resp = await client.get(
+                f"{STEM_API_URL}/stems/{musicbrainz_id}",
+                headers={"X-API-Key": STEM_API_KEY},
+            )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Stem API is unreachable",
+        )
+
+    if resp.status_code == 404:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No stems found for this song",
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stem API error: {resp.text}",
+        )
+
+    return resp.json()

@@ -740,6 +740,94 @@
       .stem-label { min-width: 60px; font-size: 0.8rem; }
       .stem-volume { min-width: 50px; }
     }
+
+    /* Nav tabs */
+    .nav-tabs {
+      display: flex;
+      gap: 0.25rem;
+      margin-left: 0.5rem;
+      flex-shrink: 0;
+    }
+    .nav-tab {
+      padding: 0.4rem 0.85rem;
+      border-radius: 500px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+      border: none;
+      background: none;
+    }
+    .nav-tab:hover { background: var(--surface-2); color: var(--text); }
+    .nav-tab.active { background: var(--surface-2); color: var(--text); }
+
+    /* Stems library grid */
+    .stems-library-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+    }
+    .stems-library-card {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+    }
+    .stems-library-card:hover { background: var(--surface-hover); border-color: var(--accent-glow); }
+    .stems-library-card-art {
+      width: 64px; height: 64px;
+      border-radius: 6px;
+      background: var(--surface-2);
+      overflow: hidden;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-faint);
+      font-size: 1.5rem;
+    }
+    .stems-library-card-art img { width: 100%; height: 100%; object-fit: cover; }
+    .stems-library-card-info { flex: 1; min-width: 0; }
+    .stems-library-card-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stems-library-card-artist {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stems-library-card-tags {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      margin-top: 0.4rem;
+    }
+    .stem-tag {
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .stem-tag.vocals { background: #7c5cfc33; color: #7c5cfc; }
+    .stem-tag.instrumental { background: #1ed76033; color: #1ed760; }
+    .stem-tag.drums { background: #f8717133; color: #f87171; }
+    .stem-tag.bass { background: #fb923c33; color: #fb923c; }
+    .stem-tag.guitar { background: #38bdf833; color: #38bdf8; }
+    .stem-tag.piano { background: #e879f933; color: #e879f9; }
+    .stem-tag.other { background: #94a3b833; color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -749,6 +837,10 @@
       <div class="search-bar">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         <input type="text" id="searchInput" placeholder="What do you want to listen to?" autocomplete="off">
+      </div>
+      <div class="nav-tabs">
+        <button class="nav-tab" id="navSearch" onclick="navigateTo('/')">Search</button>
+        <button class="nav-tab" id="navStems" onclick="navigateTo('/stems')">Stems</button>
       </div>
       <div class="config-toggle" id="configToggle" onclick="document.getElementById('configPanel').classList.toggle('open')">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
@@ -845,6 +937,13 @@
       const path = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
 
+      // Update active nav tab
+      document.getElementById('navSearch').classList.toggle('active', !path.startsWith('/stems'));
+      document.getElementById('navStems').classList.toggle('active', path.startsWith('/stems'));
+
+      if (path === '/stems') {
+        loadStemsLibrary(); return;
+      }
       if (path.startsWith('/stems/')) {
         const id = path.split('/stems/')[1];
         if (id) { loadStemsPage(id); return; }
@@ -1413,6 +1512,57 @@
 
     function updateDbLabels() {
       stemAudioEls.forEach((_, i) => updateDbLabel(i));
+    }
+
+    // === Stems Library ===
+    async function loadStemsLibrary() {
+      contentEl.innerHTML = '<div class="status"><div class="spinner"></div></div>';
+      searchEl.value = '';
+      stopStems();
+
+      try {
+        const data = await apiGet('/api/stems');
+        renderStemsLibrary(data.songs || []);
+      } catch (e) {
+        contentEl.innerHTML = `<div class="status error">Failed to load stems: ${escHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderStemsLibrary(songs) {
+      let html = '<div class="section-title" style="margin-bottom:1rem">Stems Library</div>';
+
+      if (songs.length === 0) {
+        html += `<div class="stems-empty">
+          <p>No stems separated yet.</p>
+          <p style="font-size:0.85rem">Search for a song, download it, then open its stems page to separate.</p>
+        </div>`;
+        contentEl.innerHTML = html;
+        return;
+      }
+
+      html += '<div class="stems-library-grid">';
+      songs.forEach(s => {
+        const stemNames = Object.keys(s.stems || {});
+        const artHtml = s.album_art_url
+          ? `<img src="${escAttr(s.album_art_url)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='&#9835;'">`
+          : '&#9835;';
+        const tags = stemNames.map(name => {
+          const cls = STEM_ICONS[name] ? name : 'other';
+          return `<span class="stem-tag ${escAttr(cls)}">${escHtml(name)}</span>`;
+        }).join('');
+
+        html += `<div class="stems-library-card" onclick="navigateTo('/stems/${escAttr(s.musicbrainz_id)}')">
+          <div class="stems-library-card-art">${artHtml}</div>
+          <div class="stems-library-card-info">
+            <div class="stems-library-card-title">${escHtml(s.title)}</div>
+            <div class="stems-library-card-artist">${escHtml(s.artist)}</div>
+            <div class="stems-library-card-tags">${tags}</div>
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+
+      contentEl.innerHTML = html;
     }
 
     async function triggerSeparation(mbid) {
